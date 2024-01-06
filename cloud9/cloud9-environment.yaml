@@ -1,0 +1,71 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template for Cloud9 IDE
+
+Parameters:
+  InstanceType:
+    Type: String
+    Default: t2.micro
+    Description: EC2 Instance Type for the Cloud9 Environment
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t2.medium
+      # Add other instance types as needed
+
+  Cloud9EnvironmentName:
+    Type: String
+    Default: MyCloud9Environment
+    Description: Name for the Cloud9 Environment
+
+  SubnetId:
+    Type: String
+    Description: The ID of the subnet for the Cloud9 Environment
+
+Resources:
+  Cloud9Environment:
+    Type: AWS::Cloud9::EnvironmentEC2
+    Properties: 
+      Name: !Sub "${Cloud9EnvironmentName}-Environment"
+      InstanceType: !Ref InstanceType
+      ImageId: amazonlinux-2023-x86_64
+      ConnectionType: CONNECT_SSM
+      AutomaticStopTimeMinutes: 60
+      OwnerArn: !Sub "arn:aws:iam::${AWS::AccountId}:federated-user/admin"
+      SubnetId: !Ref SubnetId
+      Tags:
+        - Key: "Environment"
+          Value: !Ref Cloud9EnvironmentName
+
+  Cloud9InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${Cloud9EnvironmentName}-InstanceRole"
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [ec2.amazonaws.com]
+            Action: ['sts:AssumeRole']
+      Path: "/"
+      Policies:
+        - PolicyName: !Sub "${Cloud9EnvironmentName}-AdminAccess"
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action: '*'
+                Resource: '*'
+
+  Cloud9InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "${Cloud9EnvironmentName}-InstanceProfile"
+      Roles: [!Ref Cloud9InstanceRole]
+
+Outputs:
+  Cloud9URL:
+    Description: "Cloud9 IDE URL"
+    Value:
+      Fn::Join:
+      - ''
+      - - !Sub https://${AWS::Region}.console.aws.amazon.com/cloud9/ide/
+        - !Ref 'Cloud9Environment'
