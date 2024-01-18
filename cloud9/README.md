@@ -10,6 +10,8 @@ aws cloudformation create-stack \
 		ParameterKey=InstanceType,ParameterValue=t2.micro \
 		ParameterKey=SubnetId,ParameterValue=subnet-xxxxxx \
 	--capabilities CAPABILITY_NAMED_IAM
+	
+aws cloudformation wait stack-create-complete --stack-name MyCloud9Stack
 ```
 
 ## Cloud9 IDE URL
@@ -25,6 +27,8 @@ aws cloudformation describe-stacks \
 
 ```sh
 aws cloudformation delete-stack --stack-name MyCloud9Stack
+
+aws cloudformation wait stack-delete-complete --stack-name MyCloud9Stack
 ```
 
 
