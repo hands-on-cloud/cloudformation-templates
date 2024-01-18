@@ -1,0 +1,152 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template for Terraform remote state with DynamoDB Autoscaling
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: Project name to use as prefix for resources. Must be lowercase, no uppercase or special characters except hyphen (-), and must start and end with a letter or number.
+
+
+
+Resources:
+  TerraformStateBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-terraform-state'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'aws:kms'
+              KMSMasterKeyID: !Ref S3KMSKey
+
+  S3KMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS Key for S3 bucket encryption
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          # For least privilege consider https://gist.github.com/skuenzli/1883406673f9546ac56956dbd50586b1
+          - Sid: Default CMK Policy
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+
+
+  TerraformStateDynamoDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${ProjectName}-terraform-lock'
+      AttributeDefinitions:
+        - AttributeName: LockID
+          AttributeType: S
+      KeySchema:
+        - AttributeName: LockID
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId: !Ref DynamoDBKMSKey
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+
+  DynamoDBKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS Key for DynamoDB table encryption
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          # For least privilege consider https://gist.github.com/skuenzli/1883406673f9546ac56956dbd50586b1
+          - Sid: Default CMK Policy
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+
+  DynamoDBAutoscalingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - application-autoscaling.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: DynamoDBAutoscalingPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeTable
+                  - dynamodb:UpdateTable
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricAlarm
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:GetMetricStatistics
+                  - cloudwatch:SetAlarmState
+                  - cloudwatch:DeleteAlarms
+                Resource: '*'
+
+  DynamoDBTableReadScalingTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity: 10
+      MinCapacity: 5
+      ResourceId: !Sub 'table/${TerraformStateDynamoDBTable}'
+      RoleARN: !GetAtt DynamoDBAutoscalingRole.Arn
+      ScalableDimension: dynamodb:table:ReadCapacityUnits
+      ServiceNamespace: dynamodb
+
+  DynamoDBTableWriteScalingTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity: 10
+      MinCapacity: 5
+      ResourceId: !Sub 'table/${TerraformStateDynamoDBTable}'
+      RoleARN: !GetAtt DynamoDBAutoscalingRole.Arn
+      ScalableDimension: dynamodb:table:WriteCapacityUnits
+      ServiceNamespace: dynamodb
+
+  DynamoDBTableReadScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: DynamoDBReadCapacityUtilizationScalingPolicy
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref DynamoDBTableReadScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: DynamoDBReadCapacityUtilization
+        ScaleInCooldown: 60
+        ScaleOutCooldown: 60
+        TargetValue: 70.0
+
+  DynamoDBTableWriteScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: DynamoDBWriteCapacityUtilizationScalingPolicy
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref DynamoDBTableWriteScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: DynamoDBWriteCapacityUtilization
+        ScaleInCooldown: 60
+        ScaleOutCooldown: 60
+        TargetValue: 70.0
+
+Outputs:
+  S3BucketName:
+    Value: !Ref TerraformStateBucket
+  DynamoDBTableName:
+    Value: !Ref TerraformStateDynamoDBTable
