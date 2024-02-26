@@ -1,0 +1,83 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: An AWS CloudFormation stack to trigger a Lambda function on AWS budget alerts.
+Resources:
+  AccountBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: budget-lambda-trigger-demo-budget-aws-monthly
+        BudgetLimit:
+          Amount: 10
+          Unit: USD
+        TimeUnit: MONTHLY
+        BudgetType: COST
+        TimePeriod:
+          Start: '1609459200' # Equivalent to 2024-01-01_00:00 in epoch seconds
+          End: '3666288000'   # Equivalent to 2087-06-15_00:00 in epoch seconds
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 90
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: SNS
+              Address: !Ref BudgetAlertTopic
+
+  BudgetAlertLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.8
+      Code:
+        ZipFile: |
+          import json
+          def lambda_handler(event, context):
+              message = json.loads(event['Records'][0]['Sns']['Message'])
+              print(f"Budget Alert: {message}")
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Budget alert processed.')
+              }
+      Timeout: 10
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaLoggingPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  BudgetAlertTopic:
+    Type: AWS::SNS::Topic
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref BudgetAlertLambda
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref BudgetAlertTopic
+
+  BudgetAlertSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: lambda
+      TopicArn: !Ref BudgetAlertTopic
+      Endpoint: !GetAtt BudgetAlertLambda.Arn
